@@ -11,7 +11,7 @@ with io.open(os.path.join(dir, 'README.md'), encoding='utf-8') as f:
 setup(
     name='pytrends-httpx',
     python_requires=">=3.7.1",
-    version='4.7.4',
+    version='1.0.0',
     description='Pseudo API for Google Trends - Async version with httpx',
     long_description=long_description,
     long_description_content_type='text/markdown',
