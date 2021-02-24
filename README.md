@@ -1,13 +1,14 @@
-# pytrends
+# pytrends-httpx
 
 ## Introduction
 
-Unofficial API for Google Trends
+Unofficial Async API for Google Trends
+
+Forked from the original [pytrends](https://github.com/GeneralMills/pytrends) module, adding async support with httpx.
+The idea is taken and updated from the [pytrends-async](https://github.com/KyleKreutzer/pytrends-async) module by KyleKreutzer.
 
 Allows simple interface for automating downloading of reports from Google Trends. 
 Only good until Google changes their backend again :-P. When that happens feel free to contribute!
-
-**Looking for maintainers!**
 
 
 ## Table of contens
@@ -86,7 +87,7 @@ Note: only https proxies will work, and you need to add the port number after th
 
 ### Build Payload
     kw_list = ["Blockchain"]
-    pytrends.build_payload(kw_list, cat=0, timeframe='today 5-y', geo='', gprop='')
+    await pytrends.build_payload(kw_list, cat=0, timeframe='today 5-y', geo='', gprop='')
 
 Parameters
 
@@ -198,7 +199,7 @@ Many API methods use the following:
 
 ### Interest Over Time
 
-    pytrends.interest_over_time()
+    await pytrends.interest_over_time()
 
 Returns pandas.Dataframe
 
@@ -207,7 +208,7 @@ Returns pandas.Dataframe
 
 ### Historical Hourly Interest
 
-    pytrends.get_historical_interest(kw_list, year_start=2018, month_start=1, day_start=1, hour_start=0, year_end=2018, month_end=2, day_end=1, hour_end=0, cat=0, geo='', gprop='', sleep=0)
+    await pytrends.get_historical_interest(kw_list, year_start=2018, month_start=1, day_start=1, hour_start=0, year_end=2018, month_end=2, day_end=1, hour_end=0, cat=0, geo='', gprop='', sleep=0)
     
 Parameters 
 
@@ -230,7 +231,7 @@ Returns pandas.Dataframe
 
 ### Interest by Region
 
-    pytrends.interest_by_region(resolution='COUNTRY', inc_low_vol=True, inc_geo_code=False)
+    await pytrends.interest_by_region(resolution='COUNTRY', inc_low_vol=True, inc_geo_code=False)
 
 Parameters
 
@@ -255,7 +256,7 @@ Returns pandas.DataFrame
 
 ### Related Topics
 
-    pytrends.related_topics()
+    await pytrends.related_topics()
 
 Returns dictionary of pandas.DataFrames
 
@@ -263,7 +264,7 @@ Returns dictionary of pandas.DataFrames
 
 ### Related Queries
 
-    pytrends.related_queries()
+    await pytrends.related_queries()
 
 Returns dictionary of pandas.DataFrames
 
@@ -271,8 +272,8 @@ Returns dictionary of pandas.DataFrames
 
 ### Trending Searches
 
-	pytrends.trending_searches(pn='united_states') # trending searches in real time for United States
-	pytrends.trending_searches(pn='japan') # Japan
+	await pytrends.trending_searches(pn='united_states') # trending searches in real time for United States
+	await pytrends.trending_searches(pn='japan') # Japan
 
 Returns pandas.DataFrame
 
@@ -280,7 +281,7 @@ Returns pandas.DataFrame
 
 ### Top Charts
 
-    pytrends.top_charts(date, hl='en-US', tz=300, geo='GLOBAL')
+    await pytrends.top_charts(date, hl='en-US', tz=300, geo='GLOBAL')
 
 Parameters
 
@@ -298,7 +299,7 @@ Returns pandas.DataFrame
 
 ### Suggestions
 
-    pytrends.suggestions(keyword)
+    await pytrends.suggestions(keyword)
 
 Parameters
 
@@ -313,7 +314,7 @@ Returns dictionary
 
 ### Categories
 
-    pytrends.categories()
+    await pytrends.categories()
 
 Returns dictionary
 
@@ -329,6 +330,14 @@ Returns dictionary
 * For certain configurations the dependency lib certifi requires the environment variable REQUESTS_CA_BUNDLE to be explicitly set and exported. This variable must contain the path where the ca-certificates are saved or a SSLError: [SSL: CERTIFICATE_VERIFY_FAILED] error is given at runtime. 
 
 # Credits
+
+* Original pytrends code by John Hogue and Burton DeWilde
+
+  - https://github.com/GeneralMills/pytrends
+  
+* Original async modification of pytrends by Kyle Kreutzer
+
+  - https://github.com/KyleKreutzer/pytrends-async
 
 * Major JSON revision ideas taken from pat310's JavaScript library
 

@@ -5,8 +5,8 @@ from calendar import monthrange
 
 import pandas as pd
 
-from pytrends.exceptions import ResponseError
-from pytrends.request import TrendReq
+from pytrends_httpx.exceptions import ResponseError
+from pytrends_httpx.request import TrendReq
 
 
 def get_last_date_of_month(year: int, month: int) -> date:
@@ -26,12 +26,12 @@ def convert_dates_to_timeframe(start: date, stop: date) -> str:
     return f"{start.strftime('%Y-%m-%d')} {stop.strftime('%Y-%m-%d')}"
 
 
-def _fetch_data(pytrends, build_payload, timeframe: str) -> pd.DataFrame:
+async def _fetch_data(pytrends, build_payload, timeframe: str) -> pd.DataFrame:
     """Attempts to fecth data and retries in case of a ResponseError."""
     attempts, fetched = 0, False
     while not fetched:
         try:
-            build_payload(timeframe=timeframe)
+            await build_payload(timeframe=timeframe)
         except ResponseError as err:
             print(err)
             print(f'Trying again in {60 + 5 * attempts} seconds.')
@@ -42,10 +42,10 @@ def _fetch_data(pytrends, build_payload, timeframe: str) -> pd.DataFrame:
                 break
         else:
             fetched = True
-    return pytrends.interest_over_time()
+    return await pytrends.interest_over_time()
 
 
-def get_daily_data(word: str,
+async def get_daily_data(word: str,
                  start_year: int,
                  start_mon: int,
                  stop_year: int,
@@ -90,7 +90,7 @@ def get_daily_data(word: str,
     """
 
     # Set up start and stop dates
-    start_date = date(start_year, start_mon, 1) 
+    start_date = date(start_year, start_mon, 1)
     stop_date = get_last_date_of_month(stop_year, stop_mon)
 
     # Start pytrends for US region
@@ -100,8 +100,8 @@ def get_daily_data(word: str,
                             kw_list=[word], cat=0, geo=geo, gprop='')
 
     # Obtain monthly data for all months in years [start_year, stop_year]
-    monthly = _fetch_data(pytrends, build_payload,
-                         convert_dates_to_timeframe(start_date, stop_date))
+    monthly = await _fetch_data(pytrends, build_payload,
+                               convert_dates_to_timeframe(start_date, stop_date))
 
     # Get daily data, month by month
     results = {}
@@ -112,7 +112,7 @@ def get_daily_data(word: str,
         timeframe = convert_dates_to_timeframe(current, last_date_of_month)
         if verbose:
             print(f'{word}:{timeframe}')
-        results[current] = _fetch_data(pytrends, build_payload, timeframe)
+        results[current] = await _fetch_data(pytrends, build_payload, timeframe)
         current = last_date_of_month + timedelta(days=1)
         sleep(wait_time)  # don't go too fast or Google will send 429s
 

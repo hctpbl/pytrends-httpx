@@ -1,18 +1,14 @@
 import json
-import sys
 import time
 from datetime import datetime, timedelta
-
-import pandas as pd
-import requests
-
-from pandas.io.json._normalize import nested_to_record
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
-
-from pytrends import exceptions
-
 from urllib.parse import quote
+
+import httpx
+import pandas as pd
+from pandas.io.json._normalize import nested_to_record
+from tenacity import AsyncRetrying, TryAgain, stop_after_attempt, wait_chain, wait_fixed
+
+from pytrends_httpx import exceptions
 
 
 class TrendReq(object):
@@ -32,7 +28,7 @@ class TrendReq(object):
     TODAY_SEARCHES_URL = 'https://trends.google.com/trends/api/dailytrends'
     ERROR_CODES = (500, 502, 504, 429)
 
-    def __init__(self, hl='en-US', tz=360, geo='', timeout=(2, 5), proxies='',
+    def __init__(self, hl='en-US', tz=360, geo='', timeout=(2, 5), proxies=[],
                  retries=0, backoff_factor=0, requests_args=None):
         """
         Initialize default values for params
@@ -51,7 +47,7 @@ class TrendReq(object):
         self.backoff_factor = backoff_factor
         self.proxy_index = 0
         self.requests_args = requests_args or {}
-        self.cookies = self.GetGoogleCookie()
+        self.cookies = None
         # intialize widget payloads
         self.token_payload = dict()
         self.interest_over_time_widget = dict()
@@ -59,7 +55,14 @@ class TrendReq(object):
         self.related_topics_widget_list = list()
         self.related_queries_widget_list = list()
 
-    def GetGoogleCookie(self):
+
+    def _get_proxy(self):
+        """
+        Gets the proxy that will be used to perform the next request
+        """
+        return self.proxies[self.proxy_index]
+
+    async def GetGoogleCookie(self):
         """
         Gets google cookie (used for each and every proxy; once on init otherwise)
         Removes proxy from the list on proxy error
@@ -67,31 +70,33 @@ class TrendReq(object):
         while True:
             if "proxies" in self.requests_args:
                 try:
-                    return dict(filter(lambda i: i[0] == 'NID', requests.get(
-                        'https://trends.google.com/?geo={geo}'.format(
-                            geo=self.hl[-2:]),
-                        timeout=self.timeout,
-                        **self.requests_args
-                    ).cookies.items()))
+                    async with httpx.AsyncClient() as client:
+                        cookies_response = await client.get(
+                            'https://trends.google.com/?geo={geo}'.format(geo=self.hl[-2:]),
+                            timeout=self.timeout,
+                            **self.requests_args
+                        )
+                    return dict(filter(lambda i: i[0] == 'NID', cookies_response.cookies.items()))
                 except:
                     continue
             else:
                 if len(self.proxies) > 0:
-                    proxy = {'https': self.proxies[self.proxy_index]}
+                    proxy = {'https://': self._get_proxy()}
                 else:
-                    proxy = ''
+                    proxy = {}
                 try:
-                    return dict(filter(lambda i: i[0] == 'NID', requests.get(
-                        'https://trends.google.com/?geo={geo}'.format(
-                            geo=self.hl[-2:]),
-                        timeout=self.timeout,
-                        proxies=proxy,
-                        **self.requests_args
-                    ).cookies.items()))
-                except requests.exceptions.ProxyError:
+                    async with httpx.AsyncClient(proxies=proxy) as client:
+                        cookies_response = await client.get(
+                            'https://trends.google.com/?geo={geo}'.format(geo=self.hl[-2:]),
+                            timeout=self.timeout,
+                            **self.requests_args
+                        )
+                    return dict(filter(lambda i: i[0] == 'NID', cookies_response.cookies.items()))
+                except httpx.ProxyError:
                     print('Proxy error. Changing IP')
+                    print(self.proxies)
                     if len(self.proxies) > 1:
-                        self.proxies.remove(self.proxies[self.proxy_index])
+                        self.proxies.remove(self._get_proxy())
                     else:
                         print('No more proxies available. Bye!')
                         raise
@@ -106,7 +111,25 @@ class TrendReq(object):
         else:
             self.proxy_index = 0
 
-    def _get_data(self, url, method=GET_METHOD, trim_chars=0, **kwargs):
+    async def _do_async_request(self, client, method, url, **kwargs):
+        """
+        Makes an async request
+        :param client: the httpx async client to make the request with
+        :param method: the HTTP method ('get' or 'post')
+        :param url: the url to which the request will be sent
+        :param kwargs: any extra key arguments passed to the request builder (usually query parameters or data)
+        :return:
+        """
+        if method == TrendReq.POST_METHOD:
+            response = await client.post(url, timeout=self.timeout,
+                                         cookies=self.cookies, **kwargs,
+                                         **self.requests_args)
+        else:
+            response = await client.get(url, timeout=self.timeout, cookies=self.cookies,
+                                        **kwargs, **self.requests_args)
+        return response
+
+    async def _get_data(self, url, method=GET_METHOD, trim_chars=0, **kwargs):
         """Send a request to Google and return the JSON response as a Python object
         :param url: the url to which the request will be sent
         :param method: the HTTP method ('get' or 'post')
@@ -115,27 +138,20 @@ class TrendReq(object):
         :param kwargs: any extra key arguments passed to the request builder (usually query parameters or data)
         :return:
         """
-        s = requests.session()
-        # Retries mechanism. Activated when one of statements >0 (best used for proxy)
-        if self.retries > 0 or self.backoff_factor > 0:
-            retry = Retry(total=self.retries, read=self.retries,
-                          connect=self.retries,
-                          backoff_factor=self.backoff_factor,
-                          status_forcelist=TrendReq.ERROR_CODES,
-                          method_whitelist=frozenset(['GET', 'POST']))
-            s.mount('https://', HTTPAdapter(max_retries=retry))
-
-        s.headers.update({'accept-language': self.hl})
+        async_client_proxy = {}
+        if len(self.proxies) > 0 or self.cookies is None:
+            self.cookies = await self.GetGoogleCookie()
         if len(self.proxies) > 0:
-            self.cookies = self.GetGoogleCookie()
-            s.proxies.update({'https': self.proxies[self.proxy_index]})
-        if method == TrendReq.POST_METHOD:
-            response = s.post(url, timeout=self.timeout,
-                              cookies=self.cookies, **kwargs,
-                              **self.requests_args)  # DO NOT USE retries or backoff_factor here
-        else:
-            response = s.get(url, timeout=self.timeout, cookies=self.cookies,
-                             **kwargs, **self.requests_args)  # DO NOT USE retries or backoff_factor here
+            async_client_proxy.update({'https://': self._get_proxy()})
+        async with httpx.AsyncClient(proxies=async_client_proxy) as s:
+            s.headers.update({'accept-language': self.hl})
+            # Retries mechanism. Activated when one of statements >0 (best used for proxy)
+            wait_list = [wait_fixed(self.backoff_factor * (2 ** retry - 1)) for retry in range(self.retries)]
+            async for attempt in AsyncRetrying(stop=stop_after_attempt(self.retries), wait=wait_chain(*wait_list)):
+                with attempt:
+                    response = await self._do_async_request(s, method, url, **kwargs)
+                    if response.status_code in TrendReq.ERROR_CODES:
+                        raise TryAgain
         # check if the response contains json and throw an exception otherwise
         # Google mostly sends 'application/json' in the Content-Type header,
         # but occasionally it sends 'application/javascript
@@ -158,7 +174,7 @@ class TrendReq(object):
                 'response with code {0}.'.format(response.status_code),
                 response=response)
 
-    def build_payload(self, kw_list, cat=0, timeframe='today 5-y', geo='',
+    async def build_payload(self, kw_list, cat=0, timeframe='today 5-y', geo='',
                       gprop=''):
         """Create the payload for related queries, interest over time and interest by region"""
         if gprop not in ['', 'images', 'news', 'youtube', 'froogle']:
@@ -179,18 +195,19 @@ class TrendReq(object):
         # requests will mangle this if it is not a string
         self.token_payload['req'] = json.dumps(self.token_payload['req'])
         # get tokens
-        self._tokens()
+        await self._tokens()
         return
 
-    def _tokens(self):
+    async def _tokens(self):
         """Makes request to Google to get API tokens for interest over time, interest by region and related queries"""
         # make the request and parse the returned json
-        widget_dict = self._get_data(
+        data_response = await self._get_data(
             url=TrendReq.GENERAL_URL,
             method=TrendReq.GET_METHOD,
             params=self.token_payload,
             trim_chars=4,
-        )['widgets']
+        )
+        widget_dict = data_response['widgets']
         # order of the json matters...
         first_region_token = True
         # clear self.related_queries_widget_list and self.related_topics_widget_list
@@ -211,7 +228,7 @@ class TrendReq(object):
                 self.related_queries_widget_list.append(widget)
         return
 
-    def interest_over_time(self):
+    async def interest_over_time(self):
         """Request data from Google's Interest Over Time section and return a dataframe"""
 
         over_time_payload = {
@@ -222,7 +239,7 @@ class TrendReq(object):
         }
 
         # make the request and parse the returned json
-        req_json = self._get_data(
+        req_json = await self._get_data(
             url=TrendReq.INTEREST_OVER_TIME_URL,
             method=TrendReq.GET_METHOD,
             trim_chars=5,
@@ -264,7 +281,7 @@ class TrendReq(object):
 
         return final
 
-    def interest_by_region(self, resolution='COUNTRY', inc_low_vol=False,
+    async def interest_by_region(self, resolution='COUNTRY', inc_low_vol=False,
                            inc_geo_code=False):
         """Request data from Google's Interest by Region section and return a dataframe"""
 
@@ -287,7 +304,7 @@ class TrendReq(object):
         region_payload['tz'] = self.tz
 
         # parse returned json
-        req_json = self._get_data(
+        req_json = await self._get_data(
             url=TrendReq.INTEREST_BY_REGION_URL,
             method=TrendReq.GET_METHOD,
             trim_chars=5,
@@ -313,7 +330,7 @@ class TrendReq(object):
 
         return result_df
 
-    def related_topics(self):
+    async def related_topics(self):
         """Request data from Google's Related Topics section and return a dictionary of dataframes
 
         If no top and/or rising related topics are found, the value for the key "top" and/or "rising" will be None
@@ -332,7 +349,7 @@ class TrendReq(object):
             related_payload['tz'] = self.tz
 
             # parse the returned json
-            req_json = self._get_data(
+            req_json = await self._get_data(
                 url=TrendReq.RELATED_QUERIES_URL,
                 method=TrendReq.GET_METHOD,
                 trim_chars=5,
@@ -362,7 +379,7 @@ class TrendReq(object):
             result_dict[kw] = {'rising': df_rising, 'top': df_top}
         return result_dict
 
-    def related_queries(self):
+    async def related_queries(self):
         """Request data from Google's Related Queries section and return a dictionary of dataframes
 
         If no top and/or rising related queries are found, the value for the key "top" and/or "rising" will be None
@@ -381,7 +398,7 @@ class TrendReq(object):
             related_payload['tz'] = self.tz
 
             # parse the returned json
-            req_json = self._get_data(
+            req_json = await self._get_data(
                 url=TrendReq.RELATED_QUERIES_URL,
                 method=TrendReq.GET_METHOD,
                 trim_chars=5,
@@ -409,30 +426,32 @@ class TrendReq(object):
             result_dict[kw] = {'top': top_df, 'rising': rising_df}
         return result_dict
 
-    def trending_searches(self, pn='united_states'):
+    async def trending_searches(self, pn='united_states'):
         """Request data from Google's Hot Searches section and return a dataframe"""
 
         # make the request
         # forms become obsolete due to the new TRENDING_SEARCHES_URL
         # forms = {'ajax': 1, 'pn': pn, 'htd': '', 'htv': 'l'}
-        req_json = self._get_data(
+        response_data = await self._get_data(
             url=TrendReq.TRENDING_SEARCHES_URL,
             method=TrendReq.GET_METHOD,
             **self.requests_args
-        )[pn]
+        )
+        req_json = response_data[pn]
         result_df = pd.DataFrame(req_json)
         return result_df
 
-    def today_searches(self, pn='US'):
+    async def today_searches(self, pn='US'):
         """Request data from Google Daily Trends section and returns a dataframe"""
         forms = {'ns': 15, 'geo': pn, 'tz': '-180', 'hl': 'en-US'}
-        req_json = self._get_data(
+        request_response = await self._get_data(
             url=TrendReq.TODAY_SEARCHES_URL,
             method=TrendReq.GET_METHOD,
             trim_chars=5,
             params=forms,
             **self.requests_args
-        )['default']['trendingSearchesDays'][0]['trendingSearches']
+        )
+        req_json = request_response['default']['trendingSearchesDays'][0]['trendingSearches']
         result_df = pd.DataFrame()
         # parse the returned json
         sub_df = pd.DataFrame()
@@ -441,7 +460,7 @@ class TrendReq(object):
         result_df = pd.concat([result_df, sub_df])
         return result_df.iloc[:, -1]
 
-    def top_charts(self, date, hl='en-US', tz=300, geo='GLOBAL'):
+    async def top_charts(self, date, hl='en-US', tz=300, geo='GLOBAL'):
         """Request data from Google's Top Charts section and return a dataframe"""
 
         try:
@@ -455,7 +474,7 @@ class TrendReq(object):
                          'isMobile': False}
 
         # make the request and parse the returned json
-        req_json = self._get_data(
+        req_json = await self._get_data(
             url=TrendReq.TOP_CHARTS_URL,
             method=TrendReq.GET_METHOD,
             trim_chars=5,
@@ -468,28 +487,29 @@ class TrendReq(object):
             df = None
         return df
 
-    def suggestions(self, keyword):
+    async def suggestions(self, keyword):
         """Request data from Google's Keyword Suggestion dropdown and return a dictionary"""
 
         # make the request
         kw_param = quote(keyword)
         parameters = {'hl': self.hl}
 
-        req_json = self._get_data(
+        response_data = await self._get_data(
             url=TrendReq.SUGGESTIONS_URL + kw_param,
             params=parameters,
             method=TrendReq.GET_METHOD,
             trim_chars=5,
             **self.requests_args
-        )['default']['topics']
+        )
+        req_json = response_data['default']['topics']
         return req_json
 
-    def categories(self):
+    async def categories(self):
         """Request available categories data from Google's API and return a dictionary"""
 
         params = {'hl': self.hl}
 
-        req_json = self._get_data(
+        req_json = await self._get_data(
             url=TrendReq.CATEGORIES_URL,
             params=params,
             method=TrendReq.GET_METHOD,
@@ -498,7 +518,7 @@ class TrendReq(object):
         )
         return req_json
 
-    def get_historical_interest(self, keywords, year_start=2018, month_start=1,
+    async def get_historical_interest(self, keywords, year_start=2018, month_start=1,
                                 day_start=1, hour_start=0, year_end=2018,
                                 month_end=2, day_end=1, hour_end=0, cat=0,
                                 geo='', gprop='', sleep=0):
@@ -526,7 +546,7 @@ class TrendReq(object):
             tf = start_date_str + ' ' + date_iterator_str
 
             try:
-                self.build_payload(keywords, cat, tf, geo, gprop)
+                await self.build_payload(keywords, cat, tf, geo, gprop)
                 week_df = self.interest_over_time()
                 df = df.append(week_df)
             except Exception as e:
@@ -545,8 +565,8 @@ class TrendReq(object):
                 tf = start_date_str + ' ' + date_iterator_str
 
                 try:
-                    self.build_payload(keywords, cat, tf, geo, gprop)
-                    week_df = self.interest_over_time()
+                    await self.build_payload(keywords, cat, tf, geo, gprop)
+                    week_df = await self.interest_over_time()
                     df = df.append(week_df)
                 except Exception as e:
                     print(e)

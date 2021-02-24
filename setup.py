@@ -1,7 +1,7 @@
 import io
 import os
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 dir = os.path.dirname(__file__)
 
@@ -9,26 +9,32 @@ with io.open(os.path.join(dir, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 setup(
-    name='pytrends',
+    name='pytrends-httpx',
+    python_requires=">=3.7.1",
     version='4.7.4',
-    description='Pseudo API for Google Trends',
+    description='Pseudo API for Google Trends - Async version with httpx',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    url='https://github.com/dreyco676/pytrends',
-    author=['John Hogue', 'Burton DeWilde'],
-    author_email='dreyco676@gmail.com',
+    url='https://github.com/hctpbl/pytrends-httpx',
+    author=['Héctor Pablos'],
+    author_email='hectorpablos@gmail.com',
     license='Apache 2.0',
     classifiers=[
         'Development Status :: 4 - Beta',
+        'Environment :: Web Environment',
+        'Framework :: AsyncIO',
+        'Framework :: Trio',
         'Intended Audience :: Developers',
-        'Programming Language :: Python :: 3.3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
-        'Programming Language :: Python :: 3.6',
+        'License :: OSI Approved :: Apache Software License',
+        'Operating System :: OS Independent',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3 :: Only',
         'Programming Language :: Python :: 3.7',
-        'License :: OSI Approved :: MIT License'
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Topic :: Internet :: WWW/HTTP',
     ],
-    install_requires=['requests>=2.0', 'pandas>=0.25', 'lxml'],
-    keywords='google trends api search',
-    packages=['pytrends'],
+    install_requires=['httpx==0.16.*', 'pandas>=0.25', 'lxml'],
+    keywords='google trends api search async asyncio httpx',
+    packages=find_packages(include=['pytrends_httpx']),
 )
