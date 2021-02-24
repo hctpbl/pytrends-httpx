@@ -36,32 +36,32 @@ Only good until Google changes their backend again :-P. When that happens feel f
 
 ## Installation
 
-    pip install pytrends
+    pip install pytrends-httpx
 
 ## Requirements
 
-* Written for Python 3.3+
-* Requires Requests, lxml, Pandas
+* Written for Python 3.7.1+
+* Requires httpx, lxml, Pandas
 
-<sub><sup>[back to top](#pytrends)</sub></sup>
+<sub><sup>[back to top](#pytrends-httpx)</sub></sup>
 
 ## API
 
 ### Connect to Google
 
-    from pytrends.request import TrendReq
+    from pytrends_httpx.request import TrendReq
 
     pytrends = TrendReq(hl='en-US', tz=360)
 
 or if you want to use proxies as you are blocked due to Google rate limit:
 
 
-    from pytrends.request import TrendReq
+    from pytrends_httpx.request import TrendReq
 
     pytrends = TrendReq(hl='en-US', tz=360, timeout=(10,25), proxies=['https://34.203.233.13:80',], retries=2, backoff_factor=0.1, requests_args={'verify':False})
 
 * `timeout(connect, read)`
-  - See explantation on this on [requests docs](https://requests.readthedocs.io/en/master/user/advanced/#timeouts)
+  - See explantation on this on [httpx docs](https://www.python-httpx.org/quickstart/#timeouts)
 * tz
   - Timezone Offset
   - For example US CST is ```'360'``` (note **NOT** -360, Google uses timezone this way...)
