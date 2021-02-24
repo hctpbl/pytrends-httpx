@@ -44,7 +44,7 @@ Only good until Google changes their backend again :-P. When that happens feel f
 ## Requirements
 
 * Written for Python 3.7.1+
-* Requires httpx, lxml, Pandas
+* Requires httpx, lxml, Pandas and tenacity
 
 <sub><sup>[back to top](#pytrends-httpx)</sub></sup>
 

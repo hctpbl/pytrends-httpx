@@ -34,7 +34,7 @@ setup(
         'Programming Language :: Python :: 3.9',
         'Topic :: Internet :: WWW/HTTP',
     ],
-    install_requires=['httpx==0.16.*', 'pandas>=0.25', 'lxml'],
+    install_requires=['httpx==0.16.*', 'pandas>=0.25', 'lxml', 'tenacity>=6.3'],
     keywords='google trends api search async asyncio httpx',
     packages=find_packages(include=['pytrends_httpx']),
 )
