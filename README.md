@@ -4,8 +4,11 @@
 
 Unofficial Async API for Google Trends
 
-Forked from the original [pytrends](https://github.com/GeneralMills/pytrends) module, adding async support with httpx.
-The idea is taken and updated from the [pytrends-async](https://github.com/KyleKreutzer/pytrends-async) module by KyleKreutzer.
+Forked from the original [pytrends](https://github.com/GeneralMills/pytrends) module, version 4.7.3, adding async
+support with httpx.
+
+The idea is taken and updated from the [pytrends-async](https://github.com/KyleKreutzer/pytrends-async) module by
+KyleKreutzer.
 
 Allows simple interface for automating downloading of reports from Google Trends. 
 Only good until Google changes their backend again :-P. When that happens feel free to contribute!
