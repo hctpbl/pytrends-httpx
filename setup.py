@@ -16,7 +16,7 @@ setup(
     long_description=long_description,
     long_description_content_type='text/markdown',
     url='https://github.com/hctpbl/pytrends-httpx',
-    author=['Héctor Pablos'],
+    author='Héctor Pablos',
     author_email='hectorpablos@gmail.com',
     license='Apache 2.0',
     classifiers=[
