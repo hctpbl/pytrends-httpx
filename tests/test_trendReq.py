@@ -1,10 +1,10 @@
 import json
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pandas.api.types as ptypes
 import proxy
 from aiounittest import futurized, AsyncTestCase
-from httpx import Response, Headers, ProxyError
+from httpx import Response, Headers, ProxyError, AsyncClient
 from tenacity import RetryError
 
 from pytrends_httpx.request import TrendReq
@@ -114,30 +114,29 @@ class TestTrendReq(AsyncTestCase):
 
 class TestTrendReqRetries(AsyncTestCase):
 
-    async def test_retries_5_times_with_no_success(self):
-        mock_do_async_request = Mock(return_value=futurized(Exception('TestTrendReqRetries')))
-        _do_async_request_patcher = patch('pytrends_httpx.request.TrendReq._do_async_request', mock_do_async_request)
-        mocked_do_async_request = _do_async_request_patcher.start()
+    @patch.object(AsyncClient, "get")
+    async def test_retries_5_times_with_no_success(self, httpx_async_get):
+        httpx_async_get.return_value = futurized(Exception('TestTrendReqRetries'))
         pytrend = TrendReq(retries=5)
         with self.assertRaises(RetryError):
             await pytrend.build_payload(kw_list=['pizza', 'bagel'], timeframe='all')
-        _do_async_request_patcher.stop()
-        assert mocked_do_async_request.call_count == 5
+        self.assertEqual(httpx_async_get.call_count, 5)
 
-    async def test_retries_5_times_with_4th_one_successful(self):
+    @patch.object(AsyncClient, "get")
+    async def test_retries_5_times_with_4th_one_successful(self, httpx_async_get):
         _tokens_widgets_dict = {
             'widgets': []
         }
         _tokens_headers = Headers({'Content-Type': 'application/json'})
-        _tokens_response = Response(status_code=200, headers=_tokens_headers, text='####{widgets_dict}'.format(widgets_dict=json.dumps(_tokens_widgets_dict)))
-        mock_do_async_request = Mock()
-        mock_do_async_request.side_effect = [futurized(Exception()), futurized(Exception()), futurized(Exception()), futurized(_tokens_response)]
-        _do_async_request_patcher = patch('pytrends_httpx.request.TrendReq._do_async_request', mock_do_async_request)
-        mocked_do_async_request = _do_async_request_patcher.start()
+        _tokens_response = Response(
+            status_code=200,
+            headers=_tokens_headers,
+            text='####{widgets_dict}'.format(widgets_dict=json.dumps(_tokens_widgets_dict))
+        )
+        httpx_async_get.side_effect = [Exception(), Exception(), Exception(), _tokens_response]
         pytrend = TrendReq(retries=5)
         self.assertIsNone(await pytrend.build_payload(kw_list=['pizza', 'bagel'], timeframe='all'))
-        _do_async_request_patcher.stop()
-        assert mocked_do_async_request.call_count == 4
+        self.assertEqual(httpx_async_get.call_count, 4)
 
 
 class TestTrendReqWithProxies(AsyncTestCase):

@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from datetime import datetime, timedelta
 from urllib.parse import quote
@@ -9,6 +10,8 @@ from pandas.io.json._normalize import nested_to_record
 from tenacity import AsyncRetrying, TryAgain, stop_after_attempt, wait_chain, wait_fixed
 
 from pytrends_httpx import exceptions
+
+logger = logging.getLogger(__name__)
 
 
 class TrendReq(object):
@@ -45,6 +48,7 @@ class TrendReq(object):
         self.proxies = proxies  # add a proxy option
         self.retries = retries
         self.backoff_factor = backoff_factor
+        self.backoff = [wait_fixed(backoff_factor * (2 ** retry - 1)) for retry in range(self.retries)]
         self.proxy_index = 0
         self.requests_args = requests_args or {}
         self.cookies = None
@@ -54,6 +58,17 @@ class TrendReq(object):
         self.interest_by_region_widget = dict()
         self.related_topics_widget_list = list()
         self.related_queries_widget_list = list()
+
+
+    def _get_async_client(self):
+        """
+        Get an AsyncClient with the right proxy to use
+        """
+        if len(self.proxies) > 0:
+            proxy = {'https://': self._get_proxy()}
+        else:
+            proxy = {}
+        return httpx.AsyncClient(proxies=proxy)
 
 
     def _get_proxy(self):
@@ -67,40 +82,25 @@ class TrendReq(object):
         Gets google cookie (used for each and every proxy; once on init otherwise)
         Removes proxy from the list on proxy error
         """
-        while True:
-            if "proxies" in self.requests_args:
-                try:
-                    async with httpx.AsyncClient() as client:
-                        cookies_response = await client.get(
-                            'https://trends.google.com/?geo={geo}'.format(geo=self.hl[-2:]),
-                            timeout=self.timeout,
-                            **self.requests_args
-                        )
-                    return dict(filter(lambda i: i[0] == 'NID', cookies_response.cookies.items()))
-                except:
-                    continue
+        if len(self.proxies) > 0:
+            proxy = {'https://': self._get_proxy()}
+        else:
+            proxy = {}
+        try:
+            async with self._get_async_client() as client:
+                cookies_response = await self._do_async_request(
+                    client,
+                    TrendReq.GET_METHOD,
+                    'https://trends.google.com/?geo={geo}'.format(geo=self.hl[-2:])
+                )
+            return dict(filter(lambda i: i[0] == 'NID', cookies_response.cookies.items()))
+        except httpx.ProxyError:
+            logger.warning('Proxy error. Changing IP')
+            if len(self.proxies) > 1:
+                self.proxies.remove(self._get_proxy())
             else:
-                if len(self.proxies) > 0:
-                    proxy = {'https://': self._get_proxy()}
-                else:
-                    proxy = {}
-                try:
-                    async with httpx.AsyncClient(proxies=proxy) as client:
-                        cookies_response = await client.get(
-                            'https://trends.google.com/?geo={geo}'.format(geo=self.hl[-2:]),
-                            timeout=self.timeout,
-                            **self.requests_args
-                        )
-                    return dict(filter(lambda i: i[0] == 'NID', cookies_response.cookies.items()))
-                except httpx.ProxyError:
-                    print('Proxy error. Changing IP')
-                    print(self.proxies)
-                    if len(self.proxies) > 1:
-                        self.proxies.remove(self._get_proxy())
-                    else:
-                        print('No more proxies available. Bye!')
-                        raise
-                    continue
+                logger.warning('No more proxies available. Bye!')
+                raise
 
     def GetNewProxy(self):
         """
@@ -120,13 +120,21 @@ class TrendReq(object):
         :param kwargs: any extra key arguments passed to the request builder (usually query parameters or data)
         :return:
         """
-        if method == TrendReq.POST_METHOD:
-            response = await client.post(url, timeout=self.timeout,
-                                         cookies=self.cookies, **kwargs,
-                                         **self.requests_args)
-        else:
-            response = await client.get(url, timeout=self.timeout, cookies=self.cookies,
+        # This wait list imitates the way the backoff_factor is calculated using the requests library
+        wait_list = [wait_fixed(self.backoff_factor * (2 ** retry - 1)) for retry in range(self.retries)]
+        # Retries mechanism. Activated when one of statements >0 (best used for proxy)
+        async for attempt in AsyncRetrying(stop=stop_after_attempt(self.retries), wait=wait_chain(*wait_list)):
+            with attempt:
+                if method == TrendReq.POST_METHOD:
+                    response = await client.post(url, timeout=self.timeout,
+                                                 cookies=self.cookies, **kwargs,
+                                                 **self.requests_args)
+                else:
+                    response = await client.get(url, timeout=self.timeout, cookies=self.cookies,
                                         **kwargs, **self.requests_args)
+                if response.status_code in TrendReq.ERROR_CODES and attempt.retry_state.attempt_number <= self.retries:
+                    logger.debug(f'Attempt {attempt.retry_state.attempt_number} to {method} to {url} failed. Retrying...')
+                    raise TryAgain
         return response
 
     async def _get_data(self, url, method=GET_METHOD, trim_chars=0, **kwargs):
@@ -139,19 +147,9 @@ class TrendReq(object):
         :return:
         """
         async_client_proxy = {}
-        if len(self.proxies) > 0 or self.cookies is None:
-            self.cookies = await self.GetGoogleCookie()
-        if len(self.proxies) > 0:
-            async_client_proxy.update({'https://': self._get_proxy()})
-        async with httpx.AsyncClient(proxies=async_client_proxy) as s:
-            s.headers.update({'accept-language': self.hl})
-            # Retries mechanism. Activated when one of statements >0 (best used for proxy)
-            wait_list = [wait_fixed(self.backoff_factor * (2 ** retry - 1)) for retry in range(self.retries)]
-            async for attempt in AsyncRetrying(stop=stop_after_attempt(self.retries), wait=wait_chain(*wait_list)):
-                with attempt:
-                    response = await self._do_async_request(s, method, url, **kwargs)
-                    if response.status_code in TrendReq.ERROR_CODES:
-                        raise TryAgain
+        async with self._get_async_client() as client:
+            client.headers.update({'accept-language': self.hl})
+            response = await self._do_async_request(client, method, url, **kwargs)
         # check if the response contains json and throw an exception otherwise
         # Google mostly sends 'application/json' in the Content-Type header,
         # but occasionally it sends 'application/javascript
